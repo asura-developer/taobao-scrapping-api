@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Scraper Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .line-clamp-6 {
+            display: -webkit-box;
+            -webkit-line-clamp: 6;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+<div id="app"></div>
+
+<script>
+    const API_BASE_URL = 'http://localhost:3000/api';
+
+    // Simple state management
+    let state = {
+        activeTab: 'scrape',
+        jobs: [],
+        products: [],
+        stats: null,
+        loading: false,
+        scrapeForm: {
+            platform: 'taobao',
+            keyword: '',
+            maxProducts: 100,
+            maxPages: 10
+        },
+        filters: {
+            platform: '',
+            keyword: '',
+            detailsScraped: '',
+            page: 1,
+            limit: 20
+        },
+        selectedProduct: null
+    };
+
+    // Category presets - just category names for quick selection
+    const categoryPresets = {
+        taobao: [
+            '电脑',
+            '手机',
+            '女装',
+            '男装',
+            '食品',
+            '家电',
+            '美妆'
+        ],
+        tmall: [
+            '女装',
+            '男装',
+            '美妆',
+            '食品'
+        ],
+        '1688': [
+            '电子产品',
+            '服装',
+            '食品',
+            '家居'
+        ]
+    };
+
+    // API calls
+    async function fetchJobs() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/scraper/jobs`);
+            const data = await response.json();
+            if (data.success) {
+                state.jobs = data.data || [];
+                render();
+            }
+        } catch (error) {
+            console.error('Error fetching jobs:', error);
+        }
+    }
+
+    async function fetchProducts() {
+        state.loading = true;
+        render();
+
+        try {
+            const params = new URLSearchParams();
+            Object.entries(state.filters).forEach(([key, value]) => {
+                if (value) params.append(key, value);
+            });
+
+            const response = await fetch(`${API_BASE_URL}/products?${params}`);
+            const data = await response.json();
+            if (data.success) {
+                state.products = data.data.products || [];
+            }
+        } catch (error) {
+            console.error('Error fetching products:', error);
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    async function fetchStats() {
+        state.loading = true;
+        render();
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/products/stats/summary`);
+            const data = await response.json();
+            if (data.success) {
+                state.stats = data.data;
+            }
+        } catch (error) {
+            console.error('Error fetching stats:', error);
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    async function runMigrations() {
+        state.loading = true;
+        render();
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/migration/run`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            if (data.success) {
+                alert('Migrations completed successfully!');
+            } else {
+                alert(`Migration failed: ${data.error}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    async function startScraping() {
+        state.loading = true;
+        render();
+
+        try {
+            // Use unified /search endpoint - all searches use keyword parameter
+            const endpoint = `${API_BASE_URL}/scraper/search`;
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    platform: state.scrapeForm.platform,
+                    keyword: state.scrapeForm.keyword,
+                    maxProducts: state.scrapeForm.maxProducts,
+                    maxPages: state.scrapeForm.maxPages
+                })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                alert(`Job started! Job ID: ${data.data.jobId}`);
+                state.activeTab = 'jobs';
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    async function scrapeDetails(itemId) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/scraper/details/${itemId}`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            if (data.success) {
+                alert('Details scraped successfully!');
+                fetchProducts();
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    }
+
+    // UI Helpers
+    function getStatusBadge(status) {
+        const colors = {
+            completed: 'bg-green-100 text-green-700',
+            failed: 'bg-red-100 text-red-700',
+            running: 'bg-blue-100 text-blue-700',
+            pending: 'bg-yellow-100 text-yellow-700'
+        };
+        return `<span class="px-3 py-1 rounded-full text-xs font-medium ${colors[status] || 'bg-gray-100 text-gray-700'}">${status}</span>`;
+    }
+
+    function getPlatformBadge(platform) {
+        const colors = {
+            taobao: 'bg-orange-100 text-orange-700',
+            tmall: 'bg-red-100 text-red-700',
+            '1688': 'bg-blue-100 text-blue-700'
+        };
+        return `<span class="px-2 py-1 rounded text-xs font-medium ${colors[platform] || 'bg-gray-100 text-gray-700'}">${platform}</span>`;
+    }
+
+    // Render functions
+    function renderHeader() {
+        return `
+                <div class="bg-white border-b border-gray-200">
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div class="flex justify-between items-center py-4">
+                            <div class="flex items-center space-x-3">
+                                <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                                </svg>
+                                <div>
+                                    <h1 class="text-2xl font-bold text-gray-900">E-Commerce Scraper</h1>
+                                    <p class="text-sm text-gray-500">Taobao • Tmall • 1688</p>
+                                </div>
+                            </div>
+                            <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">Online</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+    }
+
+    function renderTabs() {
+        const tabs = [
+            { id: 'scrape', label: 'New Scrape' },
+            { id: 'jobs', label: 'Jobs' },
+            { id: 'products', label: 'Products' },
+            { id: 'stats', label: 'Statistics' },
+            { id: 'settings', label: 'Settings' }
+        ];
+
+        return `
+                <div class="bg-white border-b border-gray-200">
+                    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div class="flex space-x-8">
+                            ${tabs.map(tab => `
+                                <button
+                                    onclick="state.activeTab = '${tab.id}'; render(); if(state.activeTab === 'jobs') fetchJobs(); if(state.activeTab === 'products') fetchProducts(); if(state.activeTab === 'stats') fetchStats();"
+                                    class="py-4 border-b-2 font-medium transition-colors ${
+            state.activeTab === tab.id
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+        }"
+                                >
+                                    ${tab.label}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+    }
+
+    function renderScrapeTab() {
+        const categoryOptions = categoryPresets[state.scrapeForm.platform] || [];
+
+        return `
+                <div class="bg-white rounded-lg shadow-sm p-6">
+                    <h2 class="text-xl font-semibold mb-6">Start New Scraping Job</h2>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <!-- Platform Selection -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">🏪 Platform</label>
+                            <select onchange="state.scrapeForm.platform = this.value; render();" class="w-full px-4 py-2 border border-gray-300 rounded-lg hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="taobao" ${state.scrapeForm.platform === 'taobao' ? 'selected' : ''}>Taobao (淘宝)</option>
+                                <option value="tmall" ${state.scrapeForm.platform === 'tmall' ? 'selected' : ''}>Tmall (天猫)</option>
+                                <option value="1688" ${state.scrapeForm.platform === '1688' ? 'selected' : ''}>1688 (阿里巴巴)</option>
+                            </select>
+                        </div>
+
+                        <div></div> <!-- Spacer for grid alignment -->
+                    </div>
+
+                    <!-- Unified Search Section -->
+                    <div class="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200 rounded-lg p-6 mb-6">
+                        <div class="flex items-start space-x-3 mb-4">
+                            <span class="text-3xl">🔍</span>
+                            <div>
+                                <h3 class="font-semibold text-gray-900 text-lg">Search</h3>
+                                <p class="text-sm text-gray-600">Enter a keyword or category name (e.g., "电脑", "手机", "衣服")</p>
+                            </div>
+                        </div>
+
+                        <!-- Quick Category Presets -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">📌 Quick Select</label>
+                            <div class="flex flex-wrap gap-2">
+                                ${categoryOptions.map(category => `
+                                    <button
+                                        onclick="state.scrapeForm.keyword = '${category}'; render();"
+                                        class="px-3 py-2 rounded-full text-sm transition-all font-medium ${
+                                            state.scrapeForm.keyword === category
+                                                ? 'bg-blue-600 text-white border-blue-600 border-2'
+                                                : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                                        }"
+                                    >
+                                        ${category}
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Search Input -->
+                        <input
+                            type="text"
+                            value="${state.scrapeForm.keyword}"
+                            oninput="state.scrapeForm.keyword = this.value"
+                            placeholder="e.g., 电脑, 手机, baby formula, wireless earbuds"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-base"
+                        />
+                    </div>
+
+                    <!-- Scraping Parameters -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 bg-gray-50 rounded-lg p-6">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">⚙️ Max Products Per Job</label>
+                            <input
+                                type="number"
+                                value="${state.scrapeForm.maxProducts}"
+                                oninput="state.scrapeForm.maxProducts = Math.max(1, parseInt(this.value) || 100)"
+                                min="1"
+                                max="1000"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Total products to scrape (25 per page)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">📄 Max Pages</label>
+                            <input
+                                type="number"
+                                value="${state.scrapeForm.maxPages}"
+                                oninput="state.scrapeForm.maxPages = Math.max(1, parseInt(this.value) || 10)"
+                                min="1"
+                                max="100"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p class="text-xs text-gray-500 mt-1">Maximum pages to scrape</p>
+                        </div>
+                    </div>
+
+                    <!-- Validation Message & Submit -->
+                    ${!state.scrapeForm.keyword ? `
+                        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 flex items-start space-x-2">
+                            <span class="text-lg">⚠️</span>
+                            <p class="text-sm text-yellow-800">Please enter a search term or select a category</p>
+                        </div>
+                    ` : ''}
+
+                    <button
+                        onclick="startScraping()"
+                        ${state.loading || !state.scrapeForm.keyword ? 'disabled' : ''}
+                        class="w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform hover:scale-105 text-lg"
+                    >
+                        <span>${state.loading ? '⏳ Starting Scraper...' : '🚀 Start Scraping'}</span>
+                    </button>
+                </div>
+            `;
+    }
+
+    function renderJobsTab() {
+        if (state.jobs.length === 0) {
+            return `
+                    <div class="bg-white rounded-lg shadow-sm p-12 text-center">
+                        <p class="text-gray-500">No jobs found. Start a new scraping job!</p>
+                    </div>
+                `;
+        }
+
+        return `
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold">Scraping Jobs</h2>
+                        <button onclick="fetchJobs()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                            Refresh
+                        </button>
+                    </div>
+                    ${state.jobs.map(job => `
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <div class="flex items-start space-x-4">
+                                <div class="flex-1">
+                                    <div class="flex items-center space-x-3 mb-2">
+                                        ${getPlatformBadge(job.platform)}
+                                        ${getStatusBadge(job.status)}
+                                        <span class="text-sm text-gray-500">
+                                            ${job.searchType === 'keyword' ? job.searchParams.keyword : job.searchParams.categoryName}
+                                        </span>
+                                    </div>
+                                    <div class="text-sm text-gray-600 space-y-1">
+                                        <p>Job ID: <span class="font-mono text-xs">${job.jobId}</span></p>
+                                        ${job.status === 'running' ? `
+                                            <p>Progress: ${job.progress.productsScraped} products scraped</p>
+                                        ` : ''}
+                                        ${job.status === 'completed' ? `
+                                            <p class="text-green-600 font-medium">Completed: ${job.results.totalProducts} products</p>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+    }
+
+    function renderProductsTab() {
+        return `
+                <div class="space-y-4">
+                    <div class="bg-white rounded-lg shadow-sm p-4">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <select onchange="state.filters.platform = this.value; fetchProducts();" class="px-4 py-2 border border-gray-300 rounded-lg">
+                                <option value="">All Platforms</option>
+                                <option value="taobao">Taobao</option>
+                                <option value="tmall">Tmall</option>
+                                <option value="1688">1688</option>
+                            </select>
+                            <input
+                                type="text"
+                                placeholder="Search keyword..."
+                                onkeypress="if(event.key==='Enter') fetchProducts();"
+                                oninput="state.filters.keyword = this.value"
+                                class="px-4 py-2 border border-gray-300 rounded-lg"
+                            />
+                            <select onchange="state.filters.detailsScraped = this.value; state.filters.page = 1; fetchProducts();" class="px-4 py-2 border border-gray-300 rounded-lg">
+                                <option value="">All Products</option>
+                                <option value="true">With Details</option>
+                                <option value="false">Without Details</option>
+                            </select>
+                            <button onclick="state.filters.page = 1; fetchProducts();" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                Search
+                            </button>
+                        </div>
+                    </div>
+
+                    ${state.loading ? `
+                        <div class="bg-white rounded-lg shadow-sm p-12 text-center">
+                            <p class="text-gray-500">Loading products...</p>
+                        </div>
+                    ` : state.products.length === 0 ? `
+                        <div class="bg-white rounded-lg shadow-sm p-12 text-center">
+                            <p class="text-gray-500">No products found</p>
+                        </div>
+                    ` : `
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            ${state.products.map(product => `
+                                <div class="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                                    <img src="${product.image || '/api/placeholder/300/200'}" alt="${product.title}" class="w-full h-48 object-cover bg-gray-100" />
+                                    <div class="p-4">
+                                        <div class="flex items-center space-x-2 mb-2">
+                                            ${getPlatformBadge(product.platform)}
+                                            ${product.detailsScraped ? '<span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">Details ✓</span>' : ''}
+                                        </div>
+                                        <h3 class="font-medium text-gray-900 mb-2 line-clamp-2 text-sm">${product.title}</h3>
+                                        <p class="text-lg font-bold text-blue-600 mb-3">¥${product.price}</p>
+                                        <div class="flex space-x-2">
+                                            <button onclick="state.selectedProduct = ${JSON.stringify(product).replace(/"/g, '&quot;')}; render();" class="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm">
+                                                View
+                                            </button>
+                                            ${!product.detailsScraped ? `
+                                                <button onclick="scrapeDetails('${product.itemId}')" class="flex-1 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+                                                    Details
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="mt-6 flex justify-between items-center bg-white rounded-lg shadow-sm p-4">
+                            <button onclick="if(state.filters.page > 1) { state.filters.page--; fetchProducts(); }" class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50" ${state.filters.page <= 1 ? 'disabled' : ''}>
+                                ← Previous
+                            </button>
+                            <span class="text-sm text-gray-600">Page ${state.filters.page}</span>
+                            <button onclick="state.filters.page++; fetchProducts();" class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">
+                                Next →
+                            </button>
+                        </div>
+                    `}
+                </div>
+            `;
+    }
+
+    function renderStatsTab() {
+        if (!state.stats) {
+            return `<div class="bg-white rounded-lg shadow-sm p-12 text-center">
+                    <p class="text-gray-500">Loading statistics...</p>
+                </div>`;
+        }
+
+        return `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <p class="text-sm text-gray-500 mb-1">Total Products</p>
+                            <p class="text-3xl font-bold text-gray-900">${state.stats.totalProducts.toLocaleString()}</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <p class="text-sm text-gray-500 mb-1">With Details</p>
+                            <p class="text-3xl font-bold text-gray-900">${state.stats.productsWithDetails.toLocaleString()}</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <p class="text-sm text-gray-500 mb-1">Completion Rate</p>
+                            <p class="text-3xl font-bold text-gray-900">${state.stats.detailsPercentage}%</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <h3 class="text-lg font-semibold mb-4">By Platform</h3>
+                            <div class="space-y-3">
+                                ${state.stats.byPlatform.map(item => `
+                                    <div class="flex items-center justify-between">
+                                        ${getPlatformBadge(item._id)}
+                                        <span class="text-lg font-semibold text-gray-900">${item.count.toLocaleString()}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="bg-white rounded-lg shadow-sm p-6">
+                            <h3 class="text-lg font-semibold mb-4">Top Categories</h3>
+                            <div class="space-y-3">
+                                ${state.stats.topCategories.map(item => `
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm text-gray-700">${item._id || 'Uncategorized'}</span>
+                                        <span class="text-lg font-semibold text-gray-900">${item.count.toLocaleString()}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+    }
+
+    function renderSettingsTab() {
+        return `
+                <div class="bg-white rounded-lg shadow-sm p-6">
+                    <h2 class="text-xl font-semibold mb-6">Migration & Maintenance</h2>
+                    <div class="space-y-4">
+                        <div class="border border-gray-200 rounded-lg p-4">
+                            <h3 class="font-medium mb-2">Run Migrations</h3>
+                            <p class="text-sm text-gray-600 mb-3">Update database schema to the latest version</p>
+                            <button onclick="runMigrations()" ${state.loading ? 'disabled' : ''} class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                                ${state.loading ? 'Running...' : 'Run Migrations'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+    }
+
+    function renderProductDetailModal() {
+        if (!state.selectedProduct) return '';
+
+        const product = state.selectedProduct;
+        const details = product.detailedInfo || {};
+
+        return `
+                <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+                    <div class="bg-white rounded-lg shadow-2xl max-w-3xl w-full my-8">
+                        <div class="sticky top-0 bg-white border-b border-gray-200 p-6 flex justify-between items-center">
+                            <h2 class="text-2xl font-bold">Product Details</h2>
+                            <button onclick="state.selectedProduct = null; render();" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+                        </div>
+
+                        <div class="p-6 overflow-y-auto max-h-[calc(100vh-200px)]">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                                <div>
+                                    <img src="${product.image || '/api/placeholder/300/400'}" alt="${product.title}" class="w-full rounded-lg bg-gray-100" />
+                                </div>
+
+                                <div>
+                                    <div class="flex items-center space-x-2 mb-3">
+                                        ${getPlatformBadge(product.platform)}
+                                        ${product.detailsScraped ? '<span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">Details ✓</span>' : ''}
+                                    </div>
+                                    <h1 class="text-2xl font-bold text-gray-900 mb-2">${product.title}</h1>
+                                    <p class="text-3xl font-bold text-blue-600 mb-4">¥${product.price}</p>
+
+                                    <div class="space-y-3 text-sm text-gray-600">
+                                        <p><strong>Item ID:</strong> ${product.itemId}</p>
+                                        ${product.searchKeyword ? `<p><strong>Search Keyword:</strong> ${product.searchKeyword}</p>` : ''}
+                                        ${product.categoryName ? `<p><strong>Category:</strong> ${product.categoryName}</p>` : ''}
+                                        ${details.rating ? `<p><strong>Rating:</strong> ${details.rating}★</p>` : ''}
+                                        ${details.reviewsCount ? `<p><strong>Reviews:</strong> ${details.reviewsCount}</p>` : ''}
+                                        ${details.salesVolume ? `<p><strong>Sales Volume:</strong> ${details.salesVolume}</p>` : ''}
+                                    </div>
+
+                                    <a href="${product.link}" target="_blank" class="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                        View on Store
+                                    </a>
+                                </div>
+                            </div>
+
+                            ${details.brand ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold text-lg mb-2">Brand</h3>
+                                    <p class="text-gray-700">${details.brand}</p>
+                                </div>
+                            ` : ''}
+
+                            ${details.fullDescription ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold text-lg mb-2">Description</h3>
+                                    <p class="text-gray-700 line-clamp-6">${details.fullDescription}</p>
+                                </div>
+                            ` : ''}
+
+                            ${details.specifications && Object.keys(details.specifications).length > 0 ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold text-lg mb-3">Specifications</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        ${Object.entries(details.specifications).map(([key, value]) => `
+                                            <div class="bg-gray-50 p-3 rounded">
+                                                <p class="text-sm font-medium text-gray-600">${key}</p>
+                                                <p class="text-sm text-gray-900">${value}</p>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            ${details.variants && details.variants.length > 0 ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold text-lg mb-3">Variants</h3>
+                                    <div class="space-y-3">
+                                        ${details.variants.map(variant => `
+                                            <div>
+                                                <p class="font-medium text-gray-900">${variant.type}</p>
+                                                <div class="flex flex-wrap gap-2 mt-1">
+                                                    ${variant.options.slice(0, 10).map(option => `
+                                                        <span class="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm">${option}</span>
+                                                    `).join('')}
+                                                    ${variant.options.length > 10 ? `<span class="px-3 py-1 text-gray-600 text-sm">+${variant.options.length - 10} more</span>` : ''}
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            ${details.additionalImages && details.additionalImages.length > 0 ? `
+                                <div class="mb-6">
+                                    <h3 class="font-semibold text-lg mb-3">Additional Images</h3>
+                                    <div class="grid grid-cols-4 gap-3">
+                                        ${details.additionalImages.map(img => `
+                                            <img src="${img}" alt="Additional" class="w-full h-24 object-cover rounded bg-gray-100" />
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+    }
+
+    function render() {
+        const tabs = {
+            'scrape': renderScrapeTab,
+            'jobs': renderJobsTab,
+            'products': renderProductsTab,
+            'stats': renderStatsTab,
+            'settings': renderSettingsTab
+        };
+
+        const app = document.getElementById('app');
+        app.innerHTML = `
+                ${renderHeader()}
+                ${renderTabs()}
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                    ${tabs[state.activeTab]()}
+                </div>
+                ${renderProductDetailModal()}
+            `;
+    }
+
+    // Initial render
+    render();
+
+    // Auto-refresh jobs when on jobs tab
+    setInterval(() => {
+        if (state.activeTab === 'jobs') {
+            fetchJobs();
+        }
+    }, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+version: '3.8'
+
+# Production-optimized Docker Compose configuration (uses existing MongoDB)
+services:
+  # Taobao Scraper API
+  scraper-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taobao-scraper-api-prod
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGODB_URI=mongodb://${MONGO_USERNAME:-admin}:${MONGO_PASSWORD:-admin}@mongodb:27017/taobao_scraper?authSource=admin
+      - SCRAPER_HEADLESS=true
+    networks:
+      - mongodb_network
+    volumes:
+      - ./logs:/usr/src/app/logs
+    cap_add:
+      - SYS_ADMIN
+    shm_size: '2gb'
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+# Use existing mongodb_network
+networks:
+  mongodb_network:
+    external: true
+
+
