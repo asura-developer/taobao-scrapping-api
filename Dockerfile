@@ -1,63 +1,63 @@
-# Use Node.js LTS version with Debian (better for Puppeteer)
-CMD ["npm", "start"]
-# Run the application
+# Use Node.js LTS version with Debian
+FROM node:20-bullseye-slim
 
-    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-# Health check
-
-EXPOSE 3000
-# Expose the port the app runs on
-
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
-# Set environment variables for Puppeteer
-
-RUN mkdir -p /usr/src/app/.cache
-# Create directory for Puppeteer cache
-
-COPY . .
-# Copy application files
-
-RUN npm ci --only=production
-# Note: Puppeteer will download Chromium during installation
-# Install dependencies
-
-COPY package*.json ./
-# Copy package files
-
-WORKDIR /usr/src/app
-# Create app directory
-
-    && rm -rf /var/lib/apt/lists/*
-    && apt-get clean \
-    --no-install-recommends \
-    libvulkan1 \
-    libu2f-udev \
-    xdg-utils \
-    libxrandr2 \
-    libxkbcommon0 \
-    libxfixes3 \
-    libxdamage1 \
-    libxcomposite1 \
-    libwayland-client0 \
-    libnss3 \
-    libnspr4 \
-    libgtk-3-0 \
-    libgbm1 \
-    libdrm2 \
-    libdbus-1-3 \
-    libcups2 \
-    libatspi2.0-0 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libasound2 \
-    fonts-liberation \
-    ca-certificates \
-    gnupg \
-    wget \
+# Install dependencies required for Puppeteer/Chrome
 RUN apt-get update && apt-get install -y \
-# Install necessary dependencies for Puppeteer/Chrome
+    wget \
+    gnupg \
+    ca-certificates \
+    fonts-liberation \
+    libappindicator3-1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
+    libxss1 \
+    libxtst6 \
+    lsb-release \
+    --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-FROM node:18-bullseye-slim
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy application files
+COPY . .
+
+# Create a non-root user for running the application
+RUN groupadd -r scraper && useradd -r -g scraper -G audio,video scraper \
+    && mkdir -p /home/scraper/Downloads \
+    && chown -R scraper:scraper /app \
+    && chown -R scraper:scraper /home/scraper
+
+# Switch to non-root user
+USER scraper
+
+# Expose the port (default 3000, can be overridden with PORT env var)
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start the application
+CMD ["node", "server.js"]
 

@@ -1,41 +1,115 @@
 version: '3.8'
 
 services:
-  # Taobao Scraper API (uses existing MongoDB)
-  scraper-api:
+  # Scraper Application
+  scraper:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: taobao-scraper-api
+    container_name: taobao-scraper
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=development
-      - PORT=3000
-      - MONGODB_URI=mongodb://admin:admin@mongodb:27017/taobao_scraper?authSource=admin
-      - SCRAPER_HEADLESS=true
-    networks:
-      - mongodb_network
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://admin:${MONGO_PASSWORD:-secure_password_here}@mongodb:27017/taobao_scraper?authSource=admin
+    env_file:
+      - .env.production
     volumes:
-      # Mount for persistent logs (optional)
-      - ./logs:/usr/src/app/logs
-    # Security options for running Puppeteer
-    cap_add:
-      - SYS_ADMIN
-    shm_size: '2gb'
-    # Alternative to SYS_ADMIN if you want better security (may require additional configuration)
-    # security_opt:
-    #   - seccomp:unconfined
+      - ./logs:/app/logs
+      - scraper_data:/app/data
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - app_network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2048M
+        reservations:
+          cpus: '1'
+          memory: 1024M
+    shm_size: 2gb
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-# Use existing mongodb_network
-networks:
-  mongodb_network:
-    external: true
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-secure_password_here}
+      MONGO_INITDB_DATABASE: taobao_scraper
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - app_network
+    command: mongod --auth --quiet --logpath /dev/null
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1024M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
+  # MongoDB Admin Interface (Optional - remove in production)
+  mongo-express:
+    image: mongo-express:1.0-20
+    container_name: mongo-express
+    restart: unless-stopped
+    ports:
+      - "8089:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASSWORD:-secure_password_here}
+      ME_CONFIG_MONGODB_URL: mongodb://admin:${MONGO_PASSWORD:-secure_password_here}@mongodb:27017/?authSource=admin
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-admin123}
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - app_network
+    profiles:
+      - debug
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  scraper_data:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
